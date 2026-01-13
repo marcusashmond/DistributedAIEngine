@@ -1,0 +1,1 @@
+clang++ -std=c++17 src/main.cpp src/Node.cpp src/Scheduler.cpp src/ThreadPool.cpp src/Tensor.cpp -Iinclude -pthread -o build/DistributedAIEngine && build/DistributedAIEngine
