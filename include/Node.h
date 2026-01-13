@@ -5,6 +5,7 @@
 #include <thread>
 #include "Scheduler.h"
 #include "Tensor.h"
+#include "KVStore.h"
 #include <vector>
 #include <mutex>
 
@@ -24,16 +25,16 @@ public:
 private:
     int port;
     int serverSocket;
-    // Track connected client sockets (peers)
-    std::vector<int> peers;
-    // Alias for connected client sockets used by higher-level APIs
+    // Protect access to clientSockets
+    std::mutex clientsMutex;
+    // Track connected client sockets
     std::vector<int> clientSockets;
-    std::mutex peersMutex;
     int nodeId;
     bool running;
     std::thread serverThread;
 
     Scheduler scheduler;
+    KVStore kvStore;
 
     void serverLoop();
     void handleClient(int clientSocket);
@@ -41,6 +42,8 @@ private:
     Tensor receiveTensor(int clientSocket);
     // Broadcast a tensor to all currently connected peers
     void broadcastToPeers(const Tensor& tensor);
+    // Remove a dead socket safely
+    void removeDeadSocket(int sock);
 };
 
 #endif

@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <cstring>
 #include <thread>
+#include <chrono>
 #include "Tensor.h"
 #include <algorithm>
 
@@ -13,7 +14,10 @@ Node::Node(int port, size_t numThreads, int nodeId)
             serverSocket(-1),
             nodeId(nodeId),
             running(false),
-            scheduler(numThreads) {}
+            scheduler(numThreads) {
+    // Attempt to restore checkpoint on startup
+    kvStore.loadFromDisk("latest_tensor");
+}
 
 Node::~Node() {
     running = false;
@@ -31,6 +35,9 @@ void Node::startServer() {
 }
 
 void Node::serverLoop() {
+    // NOTE: Server runs indefinitely; clean shutdown not yet implemented.
+    // accept() blocks — this is acceptable for the prototype. We'll add
+    // signal handling, control messages, or lifecycle management later.
     serverSocket = socket(AF_INET, SOCK_STREAM, 0);
     if (serverSocket < 0) {
         std::cerr << "Failed to create socket\n";
@@ -61,16 +68,19 @@ void Node::serverLoop() {
 
     std::cout << "Node listening on port " << port << std::endl;
 
-    while (running) {
+    while (true) {
         int clientSocket = accept(serverSocket, nullptr, nullptr);
         if (clientSocket >= 0) {
             // Track client socket and dispatch handler thread
             {
-                std::lock_guard<std::mutex> lg(peersMutex);
+                std::lock_guard<std::mutex> lg(clientsMutex);
                 clientSockets.push_back(clientSocket);
             }
 
             std::thread(&Node::handleClient, this, clientSocket).detach();
+        } else {
+            if (!running) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
     }
 }
@@ -79,32 +89,53 @@ void Node::handleClient(int clientSocket) {
     try {
         Tensor received = receiveTensor(clientSocket);
 
+        kvStore.put("latest_tensor", received);
+        kvStore.saveToDisk("latest_tensor");
+
+        std::cout << "DEBUG: Submitting task for tensor of size " << received.size() << std::endl;
+
         Task task;
         task.type = TaskType::COMPUTE;
         task.name = "TensorCompute";
         task.tensor = received;
 
-        task.work = [](const Tensor& t) {
-            float sum = 0.0f;
-            for (size_t i = 0; i < t.size(); i++) {
-                sum += t[i];
+        task.work = [this](const Tensor& t) {
+            Tensor restored;
+            if (kvStore.get("latest_tensor", restored)) {
+                float sum = 0.0f;
+                for (size_t i = 0; i < restored.size(); i++) {
+                    sum += restored[i];
+                }
+                std::cout << "KVStore tensor sum: " << sum << std::endl;
+                std::cout.flush();
+            } else {
+                std::cout << "Failed to retrieve from KVStore" << std::endl;
             }
-            std::cout << "Computed tensor sum: " << sum
-                      << " on thread " << std::this_thread::get_id()
-                      << std::endl;
         };
 
         scheduler.submitTask(task);
     } catch (const std::exception& e) {
         std::cerr << "receiveTensor failed: " << e.what() << std::endl;
+        removeDeadSocket(clientSocket);
+        return;
     }
 
     close(clientSocket);
     // remove from clientSockets tracking
     {
-        std::lock_guard<std::mutex> lg(peersMutex);
+        std::lock_guard<std::mutex> lg(clientsMutex);
         auto it = std::find(clientSockets.begin(), clientSockets.end(), clientSocket);
         if (it != clientSockets.end()) clientSockets.erase(it);
+    }
+}
+
+void Node::removeDeadSocket(int sock) {
+    std::lock_guard<std::mutex> lock(clientsMutex);
+
+    auto it = std::find(clientSockets.begin(), clientSockets.end(), sock);
+    if (it != clientSockets.end()) {
+        close(sock);
+        clientSockets.erase(it);
     }
 }
 
@@ -155,11 +186,25 @@ void Node::sendTask(const std::string& message) {
 
 void Node::broadcastTensor(const Tensor& tensor) {
     auto buffer = tensor.serializeBinary();
-    size_t size = buffer.size();
+    uint64_t size = static_cast<uint64_t>(buffer.size());
 
-    for (int sock : clientSockets) {
-        ::send(sock, &size, sizeof(size_t), 0);
-        ::send(sock, buffer.data(), size, 0);
+    std::vector<int> socketsCopy;
+    {
+        std::lock_guard<std::mutex> lock(clientsMutex);
+        socketsCopy = clientSockets;
+    }
+
+    for (int sock : socketsCopy) {
+        ssize_t sent = send(sock, &size, sizeof(uint64_t), 0);
+        if (sent <= 0) {
+            removeDeadSocket(sock);
+            continue;
+        }
+
+        sent = send(sock, buffer.data(), size, 0);
+        if (sent <= 0) {
+            removeDeadSocket(sock);
+        }
     }
 }
 
@@ -246,34 +291,5 @@ Tensor Node::receiveTensor(int clientSocket) {
 }
 
 void Node::broadcastToPeers(const Tensor& tensor) {
-    std::vector<char> data = tensor.serializeBinary();
-
-    // snapshot peers under lock
-    std::vector<int> peersSnapshot;
-    {
-        std::lock_guard<std::mutex> lg(peersMutex);
-        peersSnapshot = peers;
-    }
-
-    for (int sock : peersSnapshot) {
-        // send len prefix
-        uint64_t len = data.size();
-        uint8_t lenbuf[8];
-        for (int i = 7; i >= 0; --i) {
-            lenbuf[i] = static_cast<uint8_t>(len & 0xFF);
-            len >>= 8;
-        }
-        ssize_t s = ::send(sock, lenbuf, 8, 0);
-        if (s <= 0) { std::cerr << "broadcastToPeers: send length failed to " << sock << std::endl; continue; }
-
-        // send payload
-        size_t sent = 0;
-        const char* bytes = data.data();
-        size_t tosend = data.size();
-        while (sent < tosend) {
-            ssize_t n = ::send(sock, bytes + sent, tosend - sent, 0);
-            if (n <= 0) { std::cerr << "broadcastToPeers: send failed to " << sock << std::endl; break; }
-            sent += static_cast<size_t>(n);
-        }
-    }
+    broadcastTensor(tensor);
 }
