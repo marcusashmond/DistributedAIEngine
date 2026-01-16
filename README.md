@@ -81,3 +81,17 @@ A C++ distributed AI runtime prototype supporting:
 
 This project demonstrates distributed systems engineering, concurrency, and ML infrastructure in a single, internship-ready repository.
 
+## Screenshots
+
+### Tensor Broadcast & Network Communication
+![Broadcast Output](screenshots/broadcast_output.png%20.png)
+*Multi-threaded tensor broadcasting between nodes over TCP with fault-tolerant socket management*
+
+### Graph Execution
+![Graph Execution](screenshots/graph_execution.png%20.png)
+*Parallel execution of computation graph nodes via ThreadPool with thread IDs displayed*
+
+### Checkpoint System
+![Checkpoint File](screenshots/checkpoint_file.png%20.png)
+*Disk-backed tensor checkpointing with binary serialization (TENS format)*
+
