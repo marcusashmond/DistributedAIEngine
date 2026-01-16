@@ -85,6 +85,97 @@ A C++ distributed AI runtime prototype supporting:
 
 This project demonstrates distributed systems engineering, concurrency, and ML infrastructure in a single, internship-ready repository.
 
+## Quick Start
+
+### Build
+
+```bash
+make
+```
+
+Compiles with: `g++ -std=c++17 -pthread -Iinclude -Wall -Wextra -O2`
+
+### Run
+
+```bash
+./build/DistributedAIEngine
+```
+
+**Expected Output:**
+
+- Tensor serialization/deserialization tests
+- Node server starts on port 5001
+- Two client threads send tensors
+- KVStore saves checkpoint to `checkpoints/latest_tensor.chk`
+- Graph nodes execute in parallel on ThreadPool
+- Sum computation results displayed
+
+### Test ThreadPool
+
+```bash
+g++ -std=c++17 -pthread -Iinclude tests/test_threadpool.cpp src/ThreadPool.cpp -o build/test_threadpool
+./build/test_threadpool
+```
+
+## Technical Details
+
+### Binary Serialization Format
+
+Custom TENS format (8-byte header + metadata + data):
+
+```
+Bytes 0-3:  Magic "TENS" (0x54454E53)
+Byte 4:     Version (1)
+Byte 5:     Data type (1 = float32)
+Bytes 6-7:  Reserved
+Bytes 8+:   Little-endian dimensions count
+            Shape array (uint64_t per dimension)
+            Element count (uint64_t)
+            Raw float32 data
+```
+
+### TCP Protocol
+
+**Message Format:**
+
+1. 8-byte big-endian length prefix (uint64_t)
+2. Binary TENS payload
+
+**Flow:**
+
+- Server binds to port, accepts connections
+- Client connects, sends length + tensor payload
+- Server receives with `MSG_WAITALL` for length, loops for full payload
+- Dead sockets auto-removed from connection pool
+
+### Threading Model
+
+**ThreadPool Architecture:**
+
+- Configurable worker threads (default: 4)
+- FIFO task queue with mutex protection
+- Condition variable for worker wake-up
+- Tasks execute as `std::function<void()>` lambdas
+
+**Scheduler:**
+
+- Wraps ThreadPool for Task abstraction
+- Supports COMPUTE and IO task types
+- Tasks carry tensor data and work functions
+
+**Concurrency Guarantees:**
+
+- Client socket list protected by `clientsMutex`
+- KVStore operations are thread-safe
+- Node::handleClient() runs in detached threads
+
+### Performance Characteristics
+
+- **ThreadPool:** O(1) task enqueue, O(n) for n workers competing
+- **Tensor Serialization:** O(n) where n = tensor size
+- **Broadcast:** O(m) where m = connected clients
+- **Checkpoint I/O:** Disk-bound, async-capable
+
 ## Screenshots
 
 ### Tensor Broadcast & Network Communication
@@ -101,4 +192,3 @@ This project demonstrates distributed systems engineering, concurrency, and ML i
 
 ![Checkpoint File](screenshots/checkpoint_file.png%20.png)
 *Disk-backed tensor checkpointing with binary serialization (TENS format)*
-
