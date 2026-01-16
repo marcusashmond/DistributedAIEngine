@@ -1,15 +1,4 @@
-# Distributed AI Runtime
-
-## Project Highlights
-✅ Complete C++17 distributed tensor operations system  
-✅ ThreadPool-based concurrent execution  
-✅ Fault-tolerant networking with dead socket removal  
-✅ Disk-backed checkpointing (KVStore)  
-✅ Neural execution graph with parallel node execution  
-✅ TCP-based tensor broadcasting  
-✅ Task scheduling system
-
-## Architecture
+# Architecture Diagram
 
 ```mermaid
 graph TB
@@ -64,7 +53,8 @@ graph TB
     style KV_C fill:#FF8C42,stroke:#CC6A2F,stroke-width:2px
 ```
 
-**Components:**
+## Components
+
 - **🔷 Node (Blue)**: Distributed compute node with TCP server
 - **🟢 ThreadPool (Green)**: Concurrent task execution with worker threads
 - **🟠 KVStore (Orange)**: In-memory tensor storage with disk persistence
@@ -72,12 +62,11 @@ graph TB
 - **🔴 Broadcast (Red arrows)**: TCP-based tensor distribution between nodes
 - **💾 Checkpoints**: Disk-backed tensor serialization
 
-## Overview
-A C++ distributed AI runtime prototype supporting:
-- Multi-node tensor broadcast
-- Thread-pool task scheduling
-- Disk-backed checkpointing
-- Minimal neural execution graph
+## Data Flow
 
-This project demonstrates distributed systems engineering, concurrency, and ML infrastructure in a single, internship-ready repository.
-
+1. Client threads send tensors to Node's TCP server (port 5001)
+2. Node stores tensor in KVStore and calls `saveToDisk()`
+3. ThreadPool executes compute tasks on received tensors
+4. Graph nodes run concurrently via ThreadPool
+5. Nodes broadcast tensors to connected peers over TCP
+6. On startup, nodes restore state via `loadFromDisk()`
